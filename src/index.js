@@ -7,6 +7,7 @@ const {
   createOrder,
   getAvailablePrices,
   getStatus,
+  setActivationStatus,
   getActiveActivations,
   getBalance,
 } = require('./heroClient');
@@ -1325,11 +1326,65 @@ async function handleResetWatch(ctx) {
     return;
   }
 
+  const apiKey = await requireApiKey(ctx);
+  if (!apiKey) {
+    return;
+  }
+
+  let waItems = [];
+  try {
+    waItems = await getWaActiveActivations(apiKey);
+  } catch (error) {
+    await ctx.reply(`Reset gagal ambil order aktif dari API: ${error.message}`);
+    return;
+  }
+
+  let canceled = 0;
+  let finished = 0;
+  let failed = 0;
+
+  for (const item of waItems) {
+    try {
+      const cancelRes = await setActivationStatus({
+        activationId: item.activationId,
+        status: 8,
+        apiKey,
+      });
+      if (String(cancelRes.status).startsWith('ACCESS_')) {
+        canceled += 1;
+        continue;
+      }
+
+      const finishRes = await setActivationStatus({
+        activationId: item.activationId,
+        status: 6,
+        apiKey,
+      });
+      if (String(finishRes.status).startsWith('ACCESS_')) {
+        finished += 1;
+        continue;
+      }
+
+      failed += 1;
+    } catch (error) {
+      failed += 1;
+    }
+  }
+
   activationStoreByChat.delete(chatId);
   activeBatchByChat.delete(chatId);
   restockWatchChats.delete(chatId);
   saveRestockWatchers();
-  await ctx.reply('Reset selesai: semua order/watch OTP dibersihkan dan alert restock dimatikan.');
+  await ctx.reply(
+    [
+      'Reset selesai.',
+      `Order API aktif terdeteksi: ${waItems.length}`,
+      `Berhasil cancel: ${canceled}`,
+      `Berhasil finish: ${finished}`,
+      `Gagal tutup: ${failed}`,
+      'Cache order/watch OTP dibersihkan dan alert restock dimatikan.',
+    ].join('\n'),
+  );
 }
 
 bot.command('resetwatch', handleResetWatch);

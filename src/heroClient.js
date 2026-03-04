@@ -7,6 +7,7 @@ const actionGetNumber = process.env.HERO_ACTION_GET_NUMBER || 'getNumber';
 const actionGetPrices = process.env.HERO_ACTION_GET_PRICES || 'getPrices';
 const actionGetStatus = process.env.HERO_ACTION_GET_STATUS || 'getStatus';
 const actionGetActiveActivations = process.env.HERO_ACTION_GET_ACTIVE_ACTIVATIONS || 'getActiveActivations';
+const actionSetStatus = process.env.HERO_ACTION_SET_STATUS || 'setStatus';
 
 const http = axios.create({
   baseURL,
@@ -170,6 +171,20 @@ async function getStatus({ activationId, apiKey }) {
   return parseGetStatusResponse(response.data);
 }
 
+async function setActivationStatus({ activationId, status, apiKey }) {
+  const params = {
+    api_key: resolveApiKey(apiKey),
+    action: actionSetStatus,
+    id: activationId,
+    status,
+  };
+
+  const response = await http.get(requestPath, { params, responseType: 'text' });
+  const text = String(response.data || '').trim();
+  const [code] = text.split(':');
+  return { status: code || 'UNKNOWN', raw: text };
+}
+
 function normalizeActiveActivationRows(raw) {
   if (!raw || typeof raw !== 'object') {
     return [];
@@ -245,6 +260,7 @@ module.exports = {
   createOrder,
   getAvailablePrices,
   getStatus,
+  setActivationStatus,
   getActiveActivations,
   getBalance,
 };
