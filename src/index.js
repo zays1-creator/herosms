@@ -239,6 +239,51 @@ function getStoredActivations(chatId) {
   return [...activationStoreByChat.get(chatId).values()].sort((a, b) => b.createdAt - a.createdAt);
 }
 
+async function syncStoredActivationsFromApi(chatId, apiKey) {
+  const rows = await getActiveActivations({ start: 0, limit: 100, apiKey });
+  const waRows = rows
+    .filter((row) => String(row.serviceCode || '').toLowerCase() === 'wa')
+    .sort((a, b) => String(b.activationTime || '').localeCompare(String(a.activationTime || '')));
+
+  if (!waRows.length) {
+    activationStoreByChat.delete(chatId);
+    return 0;
+  }
+
+  const mapped = new Map();
+  for (let i = 0; i < waRows.length; i += 1) {
+    const row = waRows[i];
+    const parsedAt = Date.parse(String(row.activationTime || ''));
+    const createdAt = Number.isFinite(parsedAt) ? parsedAt : (Date.now() - i);
+    mapped.set(String(row.activationId), {
+      activationId: String(row.activationId),
+      phoneNumber: row.phoneNumber,
+      price: Number(row.cost || 0),
+      batchId: null,
+      lastStatus: 'ACCESS_NUMBER',
+      lastCode: null,
+      lastNotifiedCode: null,
+      closed: false,
+      createdAt,
+    });
+  }
+
+  activationStoreByChat.set(chatId, mapped);
+  return waRows.length;
+}
+
+async function getWaActiveActivations(apiKey) {
+  const rows = await getActiveActivations({ start: 0, limit: 100, apiKey });
+  return rows
+    .filter((row) => String(row.serviceCode || '').toLowerCase() === 'wa')
+    .sort((a, b) => String(b.activationTime || '').localeCompare(String(a.activationTime || '')))
+    .map((row) => ({
+      activationId: String(row.activationId),
+      phoneNumber: row.phoneNumber,
+      cost: Number(row.cost || 0),
+    }));
+}
+
 function isMessageNotModifiedError(error) {
   const msg = String(error?.response?.data?.description || error?.message || '').toLowerCase();
   return msg.includes('message is not modified');
@@ -655,13 +700,12 @@ function startOtpPolling() {
   }, otpPollIntervalMs);
 }
 
-async function checkAllOtpForChat(chatId) {
-  const items = getStoredActivations(chatId);
+async function checkAllOtpForItems(apiKey, items) {
   const results = [];
 
   for (const item of items) {
     try {
-      const status = await checkSingleOtp(chatId, item.activationId);
+      const status = await getStatus({ activationId: item.activationId, apiKey });
       results.push({
         activationId: item.activationId,
         phoneNumber: item.phoneNumber,
@@ -738,7 +782,12 @@ bot.command('setkey', async (ctx) => {
 
   apiKeyByChat.set(String(chatId), apiKey);
   saveApiKeys();
-  await ctx.reply('API key tersimpan untuk chat ini.');
+  try {
+    const synced = await syncStoredActivationsFromApi(chatId, apiKey);
+    await ctx.reply(`API key tersimpan untuk chat ini. Sinkron order aktif: ${synced} nomor.`);
+  } catch (error) {
+    await ctx.reply(`API key tersimpan untuk chat ini. Sinkron order aktif gagal: ${error.message}`);
+  }
 });
 
 bot.command('delkey', async (ctx) => {
@@ -851,23 +900,32 @@ bot.action('otp_all', async (ctx) => {
     return;
   }
 
-  const items = getStoredActivations(chatId);
-  if (!items.length) {
-    await ctx.reply('Belum ada order tersimpan. Lakukan buy dulu.');
+  const apiKey = await requireApiKey(ctx);
+  if (!apiKey) {
     return;
   }
 
-  await ctx.reply(`Cek OTP untuk ${items.length} nomor...`);
-  const results = await checkAllOtpForChat(chatId);
+  try {
+    const items = await getWaActiveActivations(apiKey);
+    if (!items.length) {
+      await ctx.reply('Belum ada order WA aktif di API untuk API key ini.');
+      return;
+    }
 
-  const lines = results.slice(0, 40).map(formatOtpRow);
+    await ctx.reply(`Cek OTP untuk ${items.length} nomor...`);
+    const results = await checkAllOtpForItems(apiKey, items);
 
-  await ctx.reply([
-    'Hasil OTP:',
-    ...lines,
-    '',
-    'Pakai /otp <nomor_urut> untuk cek satu nomor.',
-  ].join('\n'), { parse_mode: 'Markdown' });
+    const lines = results.slice(0, 40).map(formatOtpRow);
+
+    await ctx.reply([
+      'Hasil OTP:',
+      ...lines,
+      '',
+      'Pakai /otp <nomor_urut> untuk cek satu nomor.',
+    ].join('\n'), { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply(`Ambil order aktif dari API gagal: ${error.message}`);
+  }
 });
 
 bot.action(/^rm_(.+)$/, async (ctx) => {
@@ -1033,23 +1091,27 @@ bot.action(/^buy_([^_]+)_(.+)$/, async (ctx) => {
 });
 
 bot.command('otpall', async (ctx) => {
-  const chatId = getChatId(ctx);
-  if (!chatId) {
+  const apiKey = await requireApiKey(ctx);
+  if (!apiKey) {
     return;
   }
 
-  const items = getStoredActivations(chatId);
-  if (!items.length) {
-    await ctx.reply('Belum ada order tersimpan. Lakukan buy dulu.');
-    return;
+  try {
+    const items = await getWaActiveActivations(apiKey);
+    if (!items.length) {
+      await ctx.reply('Belum ada order WA aktif di API untuk API key ini.');
+      return;
+    }
+
+    await ctx.reply(`Cek OTP untuk ${items.length} nomor...`);
+    const results = await checkAllOtpForItems(apiKey, items);
+
+    const lines = results.slice(0, 40).map(formatOtpRow);
+
+    await ctx.reply(['Hasil OTP:', ...lines].join('\n'), { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply(`Ambil order aktif dari API gagal: ${error.message}`);
   }
-
-  await ctx.reply(`Cek OTP untuk ${items.length} nomor...`);
-  const results = await checkAllOtpForChat(chatId);
-
-  const lines = results.slice(0, 40).map(formatOtpRow);
-
-  await ctx.reply(['Hasil OTP:', ...lines].join('\n'), { parse_mode: 'Markdown' });
 });
 
 bot.command('otp', async (ctx) => {
@@ -1061,14 +1123,20 @@ bot.command('otp', async (ctx) => {
     return;
   }
 
-  const chatId = getChatId(ctx);
-  if (!chatId) {
+  const apiKey = await requireApiKey(ctx);
+  if (!apiKey) {
     return;
   }
 
-  const items = getStoredActivations(chatId);
+  let items = [];
+  try {
+    items = await getWaActiveActivations(apiKey);
+  } catch (error) {
+    await ctx.reply(`Ambil order aktif dari API gagal: ${error.message}`);
+    return;
+  }
   if (!items.length) {
-    await ctx.reply('Belum ada order tersimpan. Lakukan buy dulu.');
+    await ctx.reply('Belum ada order WA aktif di API untuk API key ini.');
     return;
   }
 
@@ -1082,7 +1150,7 @@ bot.command('otp', async (ctx) => {
   const activationId = selected.activationId;
 
   try {
-    const result = await checkSingleOtp(chatId, activationId);
+    const result = await getStatus({ activationId, apiKey });
     if (result.status === 'STATUS_OK') {
       await ctx.reply(`\`${selected.phoneNumber}\` | \`${result.code}\``, { parse_mode: 'Markdown' });
       return;
