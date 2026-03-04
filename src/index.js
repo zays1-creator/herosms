@@ -991,7 +991,13 @@ bot.action(menuCallbackBuyRandom, async (ctx) => {
 });
 
 async function runQuickBuy(ctx, qty) {
-  await ctx.answerCbQuery(`Processing buy ${qty}...`);
+  if (ctx.callbackQuery) {
+    try {
+      await ctx.answerCbQuery(`Processing buy ${qty}...`);
+    } catch (error) {
+      // Ignore callback answer errors and continue buy flow.
+    }
+  }
   const chatId = getChatId(ctx);
   if (!chatId) {
     return;
