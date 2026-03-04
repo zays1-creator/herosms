@@ -35,10 +35,10 @@ Mode minimal: cukup set `TELEGRAM_BOT_TOKEN`, lalu tiap user pakai `/setkey <api
 ## Command
 
 - `/setkey <api_key>` set API key untuk chat ini (disimpan lokal)
-- `/menu` untuk buka panel buy WhatsApp Philippines
+- `/buy` untuk langsung spam buy 10 nomor WhatsApp Philippines
 - `/order <country> [max_price]` untuk order manual 1 nomor WhatsApp
 - `/otpall` untuk cek OTP semua nomor hasil buy yang tersimpan per chat
-- `/otp <activation_id>` untuk cek OTP per nomor
+- `/otp <nomor_urut>` untuk cek OTP per nomor sesuai urutan list
 - `/checkwa` untuk cek live status WA dari API bot
 - `/listbuy` untuk cek nomor WA aktif yang sudah kebeli di akun (global akun, bukan per chat)
 - `/ceksaldo` cek saldo akun dari API key chat

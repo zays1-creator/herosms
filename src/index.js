@@ -156,7 +156,7 @@ function getCommandKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        ['/menu', '/checkwa', '/restockon'],
+        ['/buy', '/checkwa', '/restockon'],
         ['/listbuy', '/otpall'],
         ['/setkey', '/ceksaldo'],
       ],
@@ -236,7 +236,7 @@ function getStoredActivations(chatId) {
     return [];
   }
 
-  return [...activationStoreByChat.get(chatId).values()].sort((a, b) => a.createdAt - b.createdAt);
+  return [...activationStoreByChat.get(chatId).values()].sort((a, b) => b.createdAt - a.createdAt);
 }
 
 function isMessageNotModifiedError(error) {
@@ -682,25 +682,34 @@ async function checkAllOtpForChat(chatId) {
   return results;
 }
 
+function formatOtpRow(row) {
+  if (row.status === 'STATUS_OK' && row.code) {
+    return `\`${row.phoneNumber}\` | \`${row.code}\``;
+  }
+  if (row.status === 'ERROR') {
+    return `\`${row.phoneNumber}\` | ERROR`;
+  }
+  return `\`${row.phoneNumber}\` | ${row.status}`;
+}
+
 bot.start((ctx) => {
   ctx.reply([
     'BOT HERO SMS',
     '',
     'Perintah:',
     '/setkey <api_key>',
-    '/menu',
+    '/buy',
     '/checkwa',
     '/restockon',
     '/listbuy',
     '/ceksaldo',
   ].join('\n'), getCommandKeyboard());
-  ctx.reply('Pilih menu:', getMainMenuKeyboard());
 });
 
 bot.help((ctx) => {
   ctx.reply([
     '/setkey <api_key>',
-    '/menu',
+    '/buy',
     '/checkwa',
     '/restockon',
     '/listbuy',
@@ -760,9 +769,8 @@ bot.command('ceksaldo', async (ctx) => {
   }
 });
 
-bot.command('menu', async (ctx) => {
-  await ctx.reply('Keyboard aktif.', getCommandKeyboard());
-  await ctx.reply('Pilih menu:', getMainMenuKeyboard());
+bot.command('buy', async (ctx) => {
+  await runQuickBuy(ctx, 10);
 });
 
 bot.action(menuCallbackNoop, async (ctx) => {
@@ -852,21 +860,13 @@ bot.action('otp_all', async (ctx) => {
   await ctx.reply(`Cek OTP untuk ${items.length} nomor...`);
   const results = await checkAllOtpForChat(chatId);
 
-  const lines = results.slice(0, 40).map((row) => {
-    if (row.status === 'STATUS_OK' && row.code) {
-      return `id ${row.activationId} | \`${row.phoneNumber}\` | OTP: \`${row.code}\``;
-    }
-    if (row.status === 'ERROR') {
-      return `id ${row.activationId} | \`${row.phoneNumber}\` | ERROR`;
-    }
-    return `id ${row.activationId} | \`${row.phoneNumber}\` | ${row.status}`;
-  });
+  const lines = results.slice(0, 40).map(formatOtpRow);
 
   await ctx.reply([
     'Hasil OTP:',
     ...lines,
     '',
-    'Pakai /otp <activation_id> untuk cek satu nomor.',
+    'Pakai /otp <nomor_urut> untuk cek satu nomor.',
   ].join('\n'), { parse_mode: 'Markdown' });
 });
 
@@ -970,7 +970,7 @@ async function runBulkBuyFromMenu(ctx, serviceCode) {
         '',
         'Manual check juga tersedia:',
         '- /otpall',
-        '- /otp <activation_id>',
+        '- /otp <nomor_urut>',
         ...(lastFailure ? ['', `Sisa gagal: ${typeof lastFailure === 'string' ? lastFailure : JSON.stringify(lastFailure)}`] : []),
       ].join('\n'),
       getOrderSummaryKeyboard(),
@@ -1041,15 +1041,7 @@ bot.command('otpall', async (ctx) => {
   await ctx.reply(`Cek OTP untuk ${items.length} nomor...`);
   const results = await checkAllOtpForChat(chatId);
 
-  const lines = results.slice(0, 40).map((row) => {
-    if (row.status === 'STATUS_OK' && row.code) {
-      return `id ${row.activationId} | \`${row.phoneNumber}\` | OTP: \`${row.code}\``;
-    }
-    if (row.status === 'ERROR') {
-      return `id ${row.activationId} | \`${row.phoneNumber}\` | ERROR`;
-    }
-    return `id ${row.activationId} | \`${row.phoneNumber}\` | ${row.status}`;
-  });
+  const lines = results.slice(0, 40).map(formatOtpRow);
 
   await ctx.reply(['Hasil OTP:', ...lines].join('\n'), { parse_mode: 'Markdown' });
 });
@@ -1059,24 +1051,38 @@ bot.command('otp', async (ctx) => {
   const parts = message.split(/\s+/).filter(Boolean);
 
   if (parts.length < 2) {
-    await ctx.reply('Format: /otp <activation_id>');
+    await ctx.reply('Format: /otp <nomor_urut>');
     return;
   }
 
-  const activationId = parts[1];
   const chatId = getChatId(ctx);
   if (!chatId) {
     return;
   }
 
+  const items = getStoredActivations(chatId);
+  if (!items.length) {
+    await ctx.reply('Belum ada order tersimpan. Lakukan buy dulu.');
+    return;
+  }
+
+  const orderIndex = Number(parts[1]);
+  if (!Number.isInteger(orderIndex) || orderIndex < 1 || orderIndex > items.length) {
+    await ctx.reply(`Nomor urut tidak valid. Pakai angka 1 sampai ${items.length}.`);
+    return;
+  }
+
+  const selected = items[orderIndex - 1];
+  const activationId = selected.activationId;
+
   try {
     const result = await checkSingleOtp(chatId, activationId);
     if (result.status === 'STATUS_OK') {
-      await ctx.reply(`OTP activation ${activationId}: ${result.code}`);
+      await ctx.reply(`\`${selected.phoneNumber}\` | \`${result.code}\``, { parse_mode: 'Markdown' });
       return;
     }
 
-    await ctx.reply(`Status activation ${activationId}: ${result.status}`);
+    await ctx.reply(`\`${selected.phoneNumber}\` | ${result.status}`, { parse_mode: 'Markdown' });
   } catch (error) {
     const status = error.response?.status;
     const data = error.response?.data;
@@ -1308,7 +1314,7 @@ bot.command('order', async (ctx) => {
           `number: \`${result.phoneNumber}\``,
           `max_price: ${formatCost(pickedRow.cost)}`,
           'Auto OTP aktif untuk nomor ini.',
-          'Cek OTP: /otp <activation_id>',
+          'Cek OTP: /otp <nomor_urut>',
         ].join('\n'),
         { parse_mode: 'Markdown' },
       );
