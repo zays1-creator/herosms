@@ -156,7 +156,7 @@ function getCommandKeyboard() {
   return {
     reply_markup: {
       keyboard: [
-        ['/buy', '/checkwa', '/restockon'],
+        ['/buy', '/reset', '/restockon'],
         ['/listbuy', '/otpall'],
         ['/setkey', '/ceksaldo'],
       ],
@@ -699,7 +699,7 @@ bot.start((ctx) => {
     'Perintah:',
     '/setkey <api_key>',
     '/buy',
-    '/checkwa',
+    '/reset',
     '/restockon',
     '/listbuy',
     '/ceksaldo',
@@ -710,7 +710,7 @@ bot.help((ctx) => {
   ctx.reply([
     '/setkey <api_key>',
     '/buy',
-    '/checkwa',
+    '/reset',
     '/restockon',
     '/listbuy',
     '/ceksaldo',
@@ -1245,7 +1245,7 @@ bot.command('restockstatus', async (ctx) => {
   );
 });
 
-bot.command('resetwatch', async (ctx) => {
+async function handleResetWatch(ctx) {
   const chatId = getChatId(ctx);
   if (!chatId) {
     return;
@@ -1253,8 +1253,13 @@ bot.command('resetwatch', async (ctx) => {
 
   activationStoreByChat.delete(chatId);
   activeBatchByChat.delete(chatId);
-  await ctx.reply('Watch OTP di-reset. Sekarang bot hanya pantau order baru.');
-});
+  restockWatchChats.delete(chatId);
+  saveRestockWatchers();
+  await ctx.reply('Reset selesai: semua order/watch OTP dibersihkan dan alert restock dimatikan.');
+}
+
+bot.command('resetwatch', handleResetWatch);
+bot.command('reset', handleResetWatch);
 
 bot.command('order', async (ctx) => {
   const message = ctx.message?.text || '';
